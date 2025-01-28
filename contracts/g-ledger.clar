@@ -9,6 +9,7 @@
 (define-constant ERR-ALREADY-VERIFIED (err u102))
 (define-constant ERR-ACTION-NOT-FOUND (err u103))
 (define-constant ERR-INVALID-REWARD (err u104))
+(define-constant ERR-INVALID-INPUT (err u105))
 
 ;; Data Variables
 (define-data-var total-actions uint u0)
@@ -102,6 +103,9 @@
 )
     (begin
         (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+        (asserts! (> (len action-type) u0) ERR-INVALID-INPUT)
+        (asserts! (> base-score u0) ERR-INVALID-INPUT)
+        (asserts! (> multiplier u0) ERR-INVALID-INPUT)
         (ok (map-set action-types
             { action-type: action-type }
             {
@@ -123,6 +127,9 @@
         (type-info (unwrap! (map-get? action-types { action-type: action-type }) ERR-INVALID-ACTION))
     )
     (asserts! (get active type-info) ERR-INVALID-ACTION)
+    (asserts! (> (len action-type) u0) ERR-INVALID-INPUT)
+    (asserts! (> (len location) u0) ERR-INVALID-INPUT)
+    (asserts! (> (len evidence-url) u0) ERR-INVALID-INPUT)
     (let (
         (impact-score (calculate-impact-score action-type))
     )
