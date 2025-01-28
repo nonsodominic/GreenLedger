@@ -1,183 +1,174 @@
 ;; Green-Ledger Environmental Impact Monitoring Contract
-;; Tracks eco-friendly actions and rewards participants with tokens
+;; Environmental Impact Monitoring Smart Contract
+;; A platform for tracking and rewarding eco-friendly actions
 
-;; Define constants
+;; Constants
 (define-constant CONTRACT-OWNER tx-sender)
 (define-constant ERR-NOT-AUTHORIZED (err u100))
 (define-constant ERR-INVALID-ACTION (err u101))
-(define-constant ERR-INVALID-AMOUNT (err u102))
-(define-constant ERR-PROJECT-NOT-FOUND (err u103))
+(define-constant ERR-ALREADY-VERIFIED (err u102))
+(define-constant ERR-ACTION-NOT-FOUND (err u103))
+(define-constant ERR-INVALID-REWARD (err u104))
 
-;; Define data variables
-(define-data-var token-name (string-ascii 32) "GREEN")
-(define-data-var token-symbol (string-ascii 10) "GRN")
-(define-data-var token-uri (optional (string-utf8 256)) none)
+;; Data Variables
+(define-data-var total-actions uint u0)
+(define-data-var total-impact-score uint u0)
 
-;; Define data maps
+;; Define action types map for valid actions
+(define-map action-types 
+    { action-type: (string-ascii 32) }
+    { 
+        base-score: uint,
+        multiplier: uint,
+        active: bool
+    }
+)
+
+;; Define eco actions map
 (define-map eco-actions
     { action-id: uint }
     {
         creator: principal,
-        action-type: (string-ascii 64),
-        impact-score: uint,
+        action-type: (string-ascii 32),
+        location: (string-ascii 64),
         timestamp: uint,
-        verified: bool
+        impact-score: uint,
+        evidence-url: (string-utf8 256),
+        verified: bool,
+        verifier: (optional principal)
     }
 )
 
-(define-map user-balances principal uint)
-
-(define-map environmental-projects
-    { project-id: uint }
+;; Define user stats map
+(define-map user-stats
+    principal
     {
-        name: (string-ascii 64),
-        description: (string-utf8 256),
-        target-amount: uint,
-        current-votes: uint,
-        status: (string-ascii 32)
+        total-actions: uint,
+        total-score: uint,
+        reputation: uint
     }
 )
-
-;; Define fungible token
-(impl-trait 'SP3FBR2AGK5H9QBDH3EEN6DF8EK8JY7RX8QJ5SVTE.sip-010-trait-ft-standard.sip-010-trait)
-
-(define-fungible-token green-token)
 
 ;; Read-only functions
-(define-read-only (get-name)
-    (ok (var-get token-name))
-)
-
-(define-read-only (get-symbol)
-    (ok (var-get token-symbol))
-)
-
-(define-read-only (get-decimals)
-    (ok u6)
-)
-
-(define-read-only (get-balance (account principal))
-    (ok (default-to u0 (map-get? user-balances account)))
-)
 
 (define-read-only (get-action-details (action-id uint))
     (map-get? eco-actions { action-id: action-id })
 )
 
-;; Public functions
-(define-public (log-eco-action (action-type (string-ascii 64)) (impact-score uint))
-    (let
-        (
-            (action-id (+ (var-get next-action-id) u1))
-        )
-        (if (is-valid-action action-type)
-            (begin
-                (map-set eco-actions
-                    { action-id: action-id }
-                    {
-                        creator: tx-sender,
-                        action-type: action-type,
-                        impact-score: impact-score,
-                        timestamp: block-height,
-                        verified: false
-                    }
-                )
-                (var-set next-action-id action-id)
-                (ok action-id)
-            )
-            ERR-INVALID-ACTION
-        )
+(define-read-only (get-user-stats (user principal))
+    (default-to 
+        { total-actions: u0, total-score: u0, reputation: u0 }
+        (map-get? user-stats user)
     )
+)
+
+(define-read-only (get-action-type-details (action-type (string-ascii 32)))
+    (map-get? action-types { action-type: action-type })
+)
+
+(define-read-only (get-total-impact)
+    (var-get total-impact-score)
+)
+
+;; Internal helper functions
+
+(define-private (calculate-impact-score (action-type (string-ascii 32)))
+    (let (
+        (type-info (unwrap! (map-get? action-types { action-type: action-type }) u0))
+    )
+    (* (get base-score type-info) (get multiplier type-info)))
+)
+
+(define-private (update-user-stats (user principal) (score uint))
+    (let (
+        (current-stats (get-user-stats user))
+    )
+    (map-set user-stats 
+        user
+        {
+            total-actions: (+ (get total-actions current-stats) u1),
+            total-score: (+ (get total-score current-stats) score),
+            reputation: (+ (get reputation current-stats) u1)
+        }
+    ))
+)
+
+;; Public functions
+
+(define-public (register-action-type 
+    (action-type (string-ascii 32)) 
+    (base-score uint)
+    (multiplier uint)
+)
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+        (ok (map-set action-types
+            { action-type: action-type }
+            {
+                base-score: base-score,
+                multiplier: multiplier,
+                active: true
+            }
+        ))
+    )
+)
+
+(define-public (log-eco-action
+    (action-type (string-ascii 32))
+    (location (string-ascii 64))
+    (evidence-url (string-utf8 256))
+)
+    (let (
+        (action-id (var-get total-actions))
+        (type-info (unwrap! (map-get? action-types { action-type: action-type }) ERR-INVALID-ACTION))
+    )
+    (asserts! (get active type-info) ERR-INVALID-ACTION)
+    (let (
+        (impact-score (calculate-impact-score action-type))
+    )
+    (begin
+        (map-set eco-actions
+            { action-id: action-id }
+            {
+                creator: tx-sender,
+                action-type: action-type,
+                location: location,
+                timestamp: block-height,
+                impact-score: impact-score,
+                evidence-url: evidence-url,
+                verified: false,
+                verifier: none
+            }
+        )
+        (var-set total-actions (+ action-id u1))
+        (ok action-id)
+    )))
 )
 
 (define-public (verify-action (action-id uint))
-    (let
-        (
-            (action (unwrap! (map-get? eco-actions { action-id: action-id }) ERR-INVALID-ACTION))
-        )
-        (if (is-eq tx-sender CONTRACT-OWNER)
-            (begin
-                (map-set eco-actions
-                    { action-id: action-id }
-                    (merge action { verified: true })
-                )
-                (reward-user (get creator action) (get impact-score action))
-                (ok true)
-            )
-            ERR-NOT-AUTHORIZED
-        )
+    (let (
+        (action (unwrap! (map-get? eco-actions { action-id: action-id }) ERR-ACTION-NOT-FOUND))
     )
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+        (asserts! (not (get verified action)) ERR-ALREADY-VERIFIED)
+        (map-set eco-actions
+            { action-id: action-id }
+            (merge action { 
+                verified: true,
+                verifier: (some tx-sender)
+            })
+        )
+        (var-set total-impact-score (+ (var-get total-impact-score) (get impact-score action)))
+        (update-user-stats (get creator action) (get impact-score action))
+        (ok true)
+    ))
 )
 
-(define-public (create-project 
-    (name (string-ascii 64))
-    (description (string-utf8 256))
-    (target-amount uint)
+;; Initialize supported action types
+(begin
+    (try! (register-action-type "TREE_PLANTING" u10 u2))
+    (try! (register-action-type "CARBON_OFFSET" u15 u2))
+    (try! (register-action-type "WASTE_RECYCLING" u5 u1))
+    (try! (register-action-type "RENEWABLE_ENERGY" u20 u3))
 )
-    (let
-        (
-            (project-id (+ (var-get next-project-id) u1))
-        )
-        (begin
-            (map-set environmental-projects
-                { project-id: project-id }
-                {
-                    name: name,
-                    description: description,
-                    target-amount: target-amount,
-                    current-votes: u0,
-                    status: "active"
-                }
-            )
-            (var-set next-project-id project-id)
-            (ok project-id)
-        )
-    )
-)
-
-(define-public (vote-on-project (project-id uint))
-    (let
-        (
-            (project (unwrap! (map-get? environmental-projects { project-id: project-id }) ERR-PROJECT-NOT-FOUND))
-            (user-balance (unwrap! (get-balance tx-sender) ERR-INVALID-AMOUNT))
-        )
-        (if (>= user-balance u1)
-            (begin
-                (map-set environmental-projects
-                    { project-id: project-id }
-                    (merge project { current-votes: (+ (get current-votes project) u1) })
-                )
-                (ok true)
-            )
-            ERR-INVALID-AMOUNT
-        )
-    )
-)
-
-;; Private functions
-(define-private (is-valid-action (action-type (string-ascii 64)))
-    (or
-        (is-eq action-type "TREE_PLANTING")
-        (is-eq action-type "CARBON_OFFSET")
-        (is-eq action-type "WASTE_RECYCLING")
-        (is-eq action-type "RENEWABLE_ENERGY")
-    )
-)
-
-(define-private (reward-user (user principal) (impact-score uint))
-    (let
-        (
-            (reward-amount (* impact-score u1000000)) ;; 1 token per impact point
-            (current-balance (default-to u0 (map-get? user-balances user)))
-        )
-        (begin
-            (ft-mint? green-token reward-amount user)
-            (map-set user-balances user (+ current-balance reward-amount))
-            (ok reward-amount)
-        )
-    )
-)
-
-;; Initialize contract data
-(define-data-var next-action-id uint u0)
-(define-data-var next-project-id uint u0)
