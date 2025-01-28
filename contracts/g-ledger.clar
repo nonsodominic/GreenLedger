@@ -117,6 +117,23 @@
     )
 )
 
+(define-public (deactivate-action-type (action-type (string-ascii 32)))
+    (begin 
+        (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+        (asserts! (> (len action-type) u0) ERR-INVALID-INPUT)
+        (let (
+            (existing-type (unwrap! (map-get? action-types { action-type: action-type }) ERR-INVALID-ACTION))
+        )
+        (begin
+            (asserts! (get active existing-type) ERR-INVALID-ACTION)
+            (ok (map-set action-types
+                { action-type: action-type }
+                (merge existing-type { active: false })
+            ))
+        ))
+    )
+)
+
 (define-public (log-eco-action
     (action-type (string-ascii 32))
     (location (string-ascii 64))
@@ -126,50 +143,57 @@
         (action-id (var-get total-actions))
         (type-info (unwrap! (map-get? action-types { action-type: action-type }) ERR-INVALID-ACTION))
     )
-    (asserts! (get active type-info) ERR-INVALID-ACTION)
-    (asserts! (> (len action-type) u0) ERR-INVALID-INPUT)
-    (asserts! (> (len location) u0) ERR-INVALID-INPUT)
-    (asserts! (> (len evidence-url) u0) ERR-INVALID-INPUT)
-    (let (
-        (impact-score (calculate-impact-score action-type))
-    )
     (begin
-        (map-set eco-actions
-            { action-id: action-id }
-            {
-                creator: tx-sender,
-                action-type: action-type,
-                location: location,
-                timestamp: block-height,
-                impact-score: impact-score,
-                evidence-url: evidence-url,
-                verified: false,
-                verifier: none
-            }
+        (asserts! (get active type-info) ERR-INVALID-ACTION)
+        (asserts! (> (len action-type) u0) ERR-INVALID-INPUT)
+        (asserts! (> (len location) u0) ERR-INVALID-INPUT)
+        (asserts! (> (len evidence-url) u0) ERR-INVALID-INPUT)
+        (let (
+            (impact-score (calculate-impact-score action-type))
         )
-        (var-set total-actions (+ action-id u1))
-        (ok action-id)
-    )))
+        (begin
+            (map-set eco-actions
+                { action-id: action-id }
+                {
+                    creator: tx-sender,
+                    action-type: action-type,
+                    location: location,
+                    timestamp: block-height,
+                    impact-score: impact-score,
+                    evidence-url: evidence-url,
+                    verified: false,
+                    verifier: none
+                }
+            )
+            (var-set total-actions (+ action-id u1))
+            (ok action-id)
+        )))
+    )
 )
 
 (define-public (verify-action (action-id uint))
-    (let (
-        (action (unwrap! (map-get? eco-actions { action-id: action-id }) ERR-ACTION-NOT-FOUND))
-    )
     (begin
         (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
-        (asserts! (not (get verified action)) ERR-ALREADY-VERIFIED)
-        (map-set eco-actions
-            { action-id: action-id }
-            (merge action { 
-                verified: true,
-                verifier: (some tx-sender)
-            })
+        (asserts! (<= action-id (var-get total-actions)) ERR-ACTION-NOT-FOUND)
+        (let (
+            (action-data (unwrap! (map-get? eco-actions { action-id: action-id }) ERR-ACTION-NOT-FOUND))
         )
-        (var-set total-impact-score (+ (var-get total-impact-score) (get impact-score action)))
-        (update-user-stats (get creator action) (get impact-score action))
-        (ok true)
-    ))
+        (begin
+            (asserts! (not (get verified action-data)) ERR-ALREADY-VERIFIED)
+            (let (
+                (verified-action (merge action-data { 
+                    verified: true,
+                    verifier: (some tx-sender)
+                }))
+            )
+            (begin
+                (map-set eco-actions { action-id: action-id } verified-action)
+                (var-set total-impact-score (+ (var-get total-impact-score) (get impact-score action-data)))
+                (update-user-stats (get creator action-data) (get impact-score action-data))
+                (ok true)
+            ))
+        ))
+    )
 )
 
 ;; Initialize supported action types
